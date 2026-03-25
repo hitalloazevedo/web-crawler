@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sitemap Visualizer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600&family=Syne:wght@400;700;800&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --border: #1e1e2e;
+    --node: #00d4ff;
+    --node-hover: #ff6b35;
+    --edge: #1a3a4a;
+    --edge-hover: #00d4ff44;
+    --text: #e0e8f0;
+    --muted: #4a5568;
+    --accent: #00d4ff;
+    --accent2: #ff6b35;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+    flex-shrink: 0;
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: -0.5px;
+    color: var(--accent);
+  }
+  .logo span { color: var(--text); opacity: 0.5; }
+
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .btn {
+    background: var(--border);
+    color: var(--text);
+    border: 1px solid #2a2a3e;
+    padding: 6px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+  .stats {
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    gap: 16px;
+  }
+  .stats b { color: var(--accent); }
+
+  #drop-zone {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    background: var(--bg);
+    gap: 16px;
+    transition: opacity 0.3s;
+  }
+
+  #drop-zone.hidden { opacity: 0; pointer-events: none; }
+
+  .drop-box {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 48px 64px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .drop-box:hover, .drop-box.drag-over {
+    border-color: var(--accent);
+    background: #00d4ff08;
+  }
+
+  .drop-icon {
+    font-size: 48px;
+    line-height: 1;
+  }
+
+  .drop-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .drop-sub {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  #file-input { display: none; }
+
+  #graph-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  svg {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+  }
+  svg:active { cursor: grabbing; }
+
+  .link {
+    stroke: var(--edge);
+    stroke-width: 1px;
+    fill: none;
+    transition: stroke 0.2s;
+  }
+  .link.highlighted { stroke: var(--accent); stroke-width: 1.5px; opacity: 0.8; }
+
+  .node circle {
+    fill: var(--surface);
+    stroke: var(--node);
+    stroke-width: 1.5px;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  .node circle[data-has-url]:hover {
+    cursor: alias;
+  }
+  .node circle:hover, .node.highlighted circle {
+    stroke: var(--node-hover);
+    fill: #ff6b3522;
+    stroke-width: 2.5px;
+  }
+  .node.root circle {
+    stroke: var(--accent2);
+    fill: #ff6b3515;
+    stroke-width: 2px;
+  }
+
+  .node text {
+    font-size: 9px;
+    fill: var(--muted);
+    pointer-events: none;
+    dominant-baseline: central;
+    text-anchor: middle;
+    transition: fill 0.2s;
+  }
+  .node:hover text, .node.highlighted text { fill: var(--text); }
+
+  #tooltip {
+    position: absolute;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 11px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    max-width: 320px;
+    z-index: 20;
+    box-shadow: 0 8px 32px #00000088;
+  }
+  #tooltip.visible { opacity: 1; }
+  #tooltip .tt-title { color: var(--accent); font-weight: 600; margin-bottom: 4px; word-break: break-all; }
+  #tooltip .tt-url { color: var(--muted); font-size: 10px; word-break: break-all; }
+  #tooltip .tt-links { color: var(--text); margin-top: 6px; font-size: 10px; }
+
+  #search-bar {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    z-index: 10;
+    display: flex;
+    gap: 6px;
+  }
+
+  #search-input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 6px 12px;
+    border-radius: 4px;
+    width: 200px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  #search-input:focus { border-color: var(--accent); }
+  #search-input::placeholder { color: var(--muted); }
+
+  .minimap {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    width: 160px;
+    height: 100px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    opacity: 0.7;
+  }
+
+  #loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    z-index: 6;
+    font-size: 13px;
+    color: var(--accent);
+    gap: 10px;
+    display: none;
+  }
+
+  .spinner {
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .zoom-controls {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 10;
+  }
+  .zoom-btn {
+    width: 32px; height: 32px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 18px;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    line-height: 1;
+  }
+  .zoom-btn:hover { background: var(--accent); color: var(--bg); }
+
+  .tt-open-btn {
+    display: block;
+    margin-top: 10px;
+    width: 100%;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    padding: 6px 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.15s;
+    letter-spacing: 0.5px;
+  }
+  .tt-open-btn:hover { background: var(--accent2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">SITE<span>/</span>MAP</div>
+  <div class="stats" id="stats">
+    <span>nós: <b id="stat-nodes">—</b></span>
+    <span>arestas: <b id="stat-edges">—</b></span>
+    <span>profundidade: <b id="stat-depth">—</b></span>
+  </div>
+  <div class="controls">
+    <button class="btn" id="btn-freeze">⏸ pausar</button>
+    <button class="btn" id="btn-reset">⟲ resetar</button>
+    <button class="btn" id="btn-export">↓ exportar SVG</button>
+    <button class="btn" onclick="document.getElementById('file-input').click()">📂 abrir .dot</button>
+  </div>
+</header>
+
+<div id="drop-zone">
+  <div class="drop-box" id="drop-box">
+    <div class="drop-icon">🗺️</div>
+    <div class="drop-title">Arraste seu arquivo .dot aqui</div>
+    <div class="drop-sub">
+      ou clique para selecionar<br>
+      <span style="color:#00d4ff88">gerado pelo sitemap crawler</span>
+    </div>
+  </div>
+</div>
+
+<div id="loading"><div class="spinner"></div> processando grafo...</div>
+
+<div id="graph-container">
+  <div id="search-bar">
+    <input type="text" id="search-input" placeholder="buscar página...">
+  </div>
+  <svg id="svg"></svg>
+  <div id="tooltip">
+    <div class="tt-title" id="tt-title"></div>
+    <div class="tt-url" id="tt-url"></div>
+    <div class="tt-links" id="tt-links"></div>
+    <button class="tt-open-btn" id="tt-open-btn">↗ abrir página</button>
+  </div>
+  <div class="zoom-controls">
+    <button class="zoom-btn" id="zoom-in">+</button>
+    <button class="zoom-btn" id="zoom-out">−</button>
+    <button class="zoom-btn" id="zoom-fit" title="fit">⊡</button>
+  </div>
+</div>
+
+<input type="file" id="file-input" accept=".dot,.gv">
+
+<script>
+// ─── DOT PARSER ──────────────────────────────────────────────────────────────
+function parseDot(dotText) {
+  const nodes = new Map();
+  const edges = [];
+
+  // Extract node definitions: id [label="..."]
+  const nodeDef = /^\s*(\w+)\s*\[([^\]]*)\]/gm;
+  let m;
+  while ((m = nodeDef.exec(dotText)) !== null) {
+    const id = m[1];
+    const attrs = m[2];
+    const labelMatch = attrs.match(/label\s*=\s*"([^"]*)"/);
+    const label = labelMatch ? labelMatch[1].replace(/\\n/g, '\n') : id;
+    const lines = label.split('\n');
+    nodes.set(id, { id, title: lines[0] || id, url: lines[1] || '', links: 0 });
+  }
+
+  // Extract edges: a -> b
+  const edgeDef = /^\s*(\w+)\s*->\s*(\w+)/gm;
+  while ((m = edgeDef.exec(dotText)) !== null) {
+    const [, source, target] = m;
+    if (!nodes.has(source)) nodes.set(source, { id: source, title: source, url: '', links: 0 });
+    if (!nodes.has(target)) nodes.set(target, { id: target, title: target, url: '', links: 0 });
+    edges.push({ source, target });
+    nodes.get(source).links++;
+  }
+
+  return {
+    nodes: Array.from(nodes.values()),
+    edges
+  };
+}
+
+// ─── D3 GRAPH ────────────────────────────────────────────────────────────────
+let simulation, svg, gMain, linkSel, nodeSel;
+let graphData = null;
+let frozen = false;
+let currentZoom = d3.zoomIdentity;
+const zoomBehavior = d3.zoom().scaleExtent([0.02, 4]);
+
+function initGraph(data) {
+  graphData = data;
+  const { nodes, edges } = data;
+
+  // Update stats
+  document.getElementById('stat-nodes').textContent = nodes.length;
+  document.getElementById('stat-edges').textContent = edges.length;
+
+  // Compute depth (BFS from root)
+  const rootId = nodes[0]?.id;
+  const depthMap = {};
+  if (rootId) {
+    const adj = {};
+    edges.forEach(e => { (adj[e.source] = adj[e.source] || []).push(e.target); });
+    const queue = [rootId]; depthMap[rootId] = 0;
+    while (queue.length) {
+      const cur = queue.shift();
+      (adj[cur] || []).forEach(n => {
+        if (depthMap[n] === undefined) { depthMap[n] = depthMap[cur] + 1; queue.push(n); }
+      });
+    }
+  }
+  const maxD = Math.max(...Object.values(depthMap), 0);
+  document.getElementById('stat-depth').textContent = maxD;
+
+  nodes.forEach(n => { n.depth = depthMap[n.id] ?? 0; });
+
+  const svgEl = document.getElementById('svg');
+  svgEl.innerHTML = '';
+  const W = svgEl.clientWidth, H = svgEl.clientHeight;
+
+  svg = d3.select('#svg');
+  svg.call(zoomBehavior.on('zoom', e => {
+    currentZoom = e.transform;
+    gMain.attr('transform', e.transform);
+  }));
+
+  // Defs for arrow markers
+  const defs = svg.append('defs');
+  defs.append('marker')
+    .attr('id', 'arrow')
+    .attr('viewBox', '0 -4 8 8')
+    .attr('refX', 14).attr('refY', 0)
+    .attr('markerWidth', 5).attr('markerHeight', 5)
+    .attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', '#1a3a4a');
+
+  gMain = svg.append('g');
+
+  // Color scale by depth
+  const colorScale = d3.scaleSequential()
+    .domain([0, Math.max(maxD, 1)])
+    .interpolator(t => d3.interpolateHsl('#ff6b35', '#00d4ff')(t));
+
+  // Node radius based on outgoing links
+  const maxLinks = Math.max(...nodes.map(n => n.links), 1);
+  const rScale = d3.scaleSqrt().domain([0, maxLinks]).range([4, 18]);
+
+  // Simulation
+  simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(edges).id(d => d.id).distance(d => {
+      return 40 + rScale(d.source.links || 0) * 2;
+    }).strength(0.3))
+    .force('charge', d3.forceManyBody().strength(d => -80 - rScale(d.links) * 8).distanceMax(300))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collision', d3.forceCollide().radius(d => rScale(d.links) + 3))
+    .alphaDecay(0.015)
+    .velocityDecay(0.4);
+
+  linkSel = gMain.append('g').selectAll('line')
+    .data(edges).join('line')
+    .attr('class', 'link')
+    .attr('marker-end', 'url(#arrow)');
+
+  nodeSel = gMain.append('g').selectAll('g')
+    .data(nodes).join('g')
+    .attr('class', (d, i) => i === 0 ? 'node root' : 'node')
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.2).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); if (!frozen) { d.fx = null; d.fy = null; } }))
+    .on('mouseover', showTooltip)
+    .on('mousemove', moveTooltip)
+    .on('mouseout', hideTooltip)
+    .on('click', highlightNode)
+    .on('dblclick', (e, d) => {
+      e.stopPropagation();
+      window.open(buildUrl(d), '_blank');
+    });
+
+  nodeSel.append('circle')
+    .attr('r', d => rScale(d.links))
+    .style('stroke', d => colorScale(d.depth));
+
+  nodeSel.append('text')
+    .text(d => d.title.length > 18 ? d.title.slice(0, 16) + '…' : d.title)
+    .attr('dy', d => rScale(d.links) + 10);
+
+  simulation.on('tick', () => {
+    linkSel
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+}
+
+// ─── TOOLTIP & URL HELPERS ──────────────────────────────────────────────────
+const BASE_URL = 'https://liag.ft.unicamp.br';
+let _currentNode = null;
+
+function buildUrl(d) {
+  const path = d.url || '';
+  return path.startsWith('http') ? path : BASE_URL + '/' + path.replace(/^\//, '');
+}
+
+function openCurrentNode() {
+  if (_currentNode) window.open(buildUrl(_currentNode), '_blank');
+}
+
+document.getElementById('tt-open-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  openCurrentNode();
+});
+
+const tooltip = document.getElementById('tooltip');
+function showTooltip(e, d) {
+  _currentNode = d;
+  document.getElementById('tt-title').textContent = d.title || d.id;
+  document.getElementById('tt-url').textContent = buildUrl(d);
+  document.getElementById('tt-links').textContent = d.links + ' links de saída  ·  E ou duplo clique para abrir';
+  tooltip.classList.add('visible');
+  moveTooltip(e);
+}
+function moveTooltip(e) {
+  tooltip.style.left = (e.offsetX + 16) + 'px';
+  tooltip.style.top = (e.offsetY - 10) + 'px';
+}
+function hideTooltip() {
+  tooltip.classList.remove('visible');
+}
+
+// ─── HIGHLIGHT ───────────────────────────────────────────────────────────────
+let highlighted = null;
+function highlightNode(e, d) {
+  e.stopPropagation();
+  if (highlighted === d.id) {
+    nodeSel.classed('highlighted', false);
+    linkSel.classed('highlighted', false);
+    highlighted = null; return;
+  }
+  highlighted = d.id;
+  const connected = new Set([d.id]);
+  linkSel.classed('highlighted', l => {
+    const src = l.source.id ?? l.source;
+    const tgt = l.target.id ?? l.target;
+    if (src === d.id || tgt === d.id) { connected.add(src); connected.add(tgt); return true; }
+    return false;
+  });
+  nodeSel.classed('highlighted', n => connected.has(n.id));
+}
+document.getElementById('svg').addEventListener('click', () => {
+  nodeSel?.classed('highlighted', false);
+  linkSel?.classed('highlighted', false);
+  highlighted = null;
+});
+
+// ─── SEARCH ──────────────────────────────────────────────────────────────────
+// ─── KEYBOARD SHORTCUT ───────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  // E key — open currently hovered node
+  if (e.key === 'e' || e.key === 'E') {
+    if (document.activeElement === document.getElementById('search-input')) return;
+    openCurrentNode();
+  }
+});
+
+document.getElementById('search-input').addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  if (!nodeSel) return;
+  if (!q) { nodeSel.classed('highlighted', false); linkSel.classed('highlighted', false); return; }
+  nodeSel.classed('highlighted', d =>
+    d.title.toLowerCase().includes(q) || d.url.toLowerCase().includes(q)
+  );
+});
+
+// ─── CONTROLS ────────────────────────────────────────────────────────────────
+document.getElementById('btn-freeze').addEventListener('click', function() {
+  frozen = !frozen;
+  this.textContent = frozen ? '▶ retomar' : '⏸ pausar';
+  this.classList.toggle('active', frozen);
+  if (frozen) {
+    simulation?.stop();
+    graphData?.nodes.forEach(n => { n.fx = n.x; n.fy = n.y; });
+  } else {
+    graphData?.nodes.forEach(n => { n.fx = null; n.fy = null; });
+    simulation?.alphaTarget(0.1).restart();
+    setTimeout(() => simulation?.alphaTarget(0), 1500);
+  }
+});
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if (graphData) initGraph(graphData);
+});
+
+document.getElementById('btn-export').addEventListener('click', () => {
+  const svgEl = document.getElementById('svg');
+  const blob = new Blob([svgEl.outerHTML], { type: 'image/svg+xml' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'sitemap.svg'; a.click();
+});
+
+document.getElementById('zoom-in').addEventListener('click', () => {
+  svg?.transition().call(zoomBehavior.scaleBy, 1.4);
+});
+document.getElementById('zoom-out').addEventListener('click', () => {
+  svg?.transition().call(zoomBehavior.scaleBy, 0.7);
+});
+document.getElementById('zoom-fit').addEventListener('click', fitView);
+
+function fitView() {
+  if (!gMain || !graphData) return;
+  const svgEl = document.getElementById('svg');
+  const W = svgEl.clientWidth, H = svgEl.clientHeight;
+  const bounds = gMain.node().getBBox();
+  if (!bounds.width || !bounds.height) return;
+  const scale = Math.min(W / bounds.width, H / bounds.height) * 0.85;
+  const tx = W / 2 - scale * (bounds.x + bounds.width / 2);
+  const ty = H / 2 - scale * (bounds.y + bounds.height / 2);
+  svg.transition().duration(600).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+}
+
+// ─── FILE LOADING ────────────────────────────────────────────────────────────
+function loadDot(text) {
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('drop-zone').classList.add('hidden');
+  setTimeout(() => {
+    const data = parseDot(text);
+    initGraph(data);
+    document.getElementById('loading').style.display = 'none';
+    setTimeout(fitView, 2000);
+  }, 50);
+}
+
+document.getElementById('file-input').addEventListener('change', function() {
+  const file = this.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => loadDot(e.target.result);
+  reader.readAsText(file);
+});
+
+const dropBox = document.getElementById('drop-box');
+dropBox.addEventListener('click', () => document.getElementById('file-input').click());
+document.addEventListener('dragover', e => { e.preventDefault(); dropBox.classList.add('drag-over'); });
+document.addEventListener('dragleave', () => dropBox.classList.remove('drag-over'));
+document.addEventListener('drop', e => {
+  e.preventDefault(); dropBox.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) { const r = new FileReader(); r.onload = ev => loadDot(ev.target.result); r.readAsText(file); }
+});
+</script>
+</body>
+</html>
