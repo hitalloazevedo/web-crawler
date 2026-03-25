@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Crawl Graph Viewer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  /* ── Reset & base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0b0e14;
+    --bg2:       #121722;
+    --bg3:       #1a2030;
+    --border:    #252d3d;
+    --text:      #c9d1e0;
+    --muted:     #4a5568;
+    --accent:    #4fc3f7;
+    --accent2:   #81d4fa;
+    --green:     #69f0ae;
+    --amber:     #ffd54f;
+    --red:       #ef5350;
+    --node-int:  #4fc3f7;
+    --node-ext:  #ef5350;
+    --node-root: #69f0ae;
+    --edge:      rgba(79,195,247,0.18);
+    --edge-hi:   rgba(79,195,247,0.7);
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    --font-ui:   'DM Sans', system-ui, sans-serif;
+    --radius:    6px;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    overflow: hidden;
+  }
+
+  /* ── Layout ── */
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    height: 52px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+    z-index: 10;
+  }
+
+  header h1 {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+
+  .spacer { flex: 1; }
+
+  /* ── Drop zone ── */
+  #drop-zone {
+    position: absolute;
+    inset: 52px 0 0 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    z-index: 5;
+    background: var(--bg);
+    transition: background 0.15s;
+  }
+
+  #drop-zone.drag-over { background: #0d1520; }
+
+  #drop-zone.hidden { display: none; }
+
+  .drop-box {
+    width: 340px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 40px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .drop-box:hover, #drop-zone.drag-over .drop-box {
+    border-color: var(--accent);
+  }
+
+  .drop-icon {
+    width: 40px; height: 40px;
+    margin: 0 auto 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+
+  .drop-title {
+    font-size: 14px;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+
+  .drop-sub {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+
+  #file-input { display: none; }
+
+  /* ── Canvas area ── */
+  #canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  svg#graph {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+  }
+
+  svg#graph:active { cursor: grabbing; }
+
+  /* ── Edges ── */
+  .link {
+    stroke: var(--edge);
+    stroke-width: 1;
+    fill: none;
+    transition: stroke 0.15s;
+  }
+
+  .link.highlighted { stroke: var(--edge-hi); stroke-width: 1.5; }
+
+  /* arrowhead marker */
+  marker path { fill: var(--edge); }
+  marker.hi path { fill: var(--edge-hi); }
+
+  /* ── Nodes ── */
+  .node circle {
+    stroke-width: 1.5;
+    transition: r 0.15s, opacity 0.15s;
+    cursor: pointer;
+  }
+
+  .node.root circle    { fill: var(--node-root); stroke: #a5d6a7; }
+  .node.internal circle { fill: var(--node-int);  stroke: #81d4fa; }
+  .node.external circle { fill: var(--node-ext);  stroke: #ef9a9a; fill-opacity: 0.7; }
+
+  .node.dimmed circle { opacity: 0.12; }
+  .node.dimmed text   { opacity: 0.08; }
+
+  .node text {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    fill: var(--muted);
+    pointer-events: none;
+    dominant-baseline: middle;
+    text-anchor: middle;
+  }
+
+  .node.root text, .node.highlighted text { fill: var(--text); }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 280px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transform: translateX(310px);
+    transition: transform 0.25s ease;
+    z-index: 20;
+  }
+
+  #sidebar.open { transform: translateX(0); }
+
+  #sidebar-header {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  #sidebar-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  #sidebar-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+  }
+
+  #sidebar-close:hover { color: var(--text); }
+
+  #sidebar-url {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text);
+    word-break: break-all;
+    line-height: 1.5;
+  }
+
+  #sidebar-links {
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+
+  .link-item {
+    padding: 6px 14px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.1s;
+    word-break: break-all;
+    line-height: 1.5;
+  }
+
+  .link-item:hover { background: var(--bg3); color: var(--text); }
+
+  .link-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .link-dot.int { background: var(--node-int); }
+  .link-dot.ext { background: var(--node-ext); }
+
+  /* ── Stats bar (bottom) ── */
+  #stats {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 1px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--border);
+    z-index: 10;
+  }
+
+  .stat {
+    background: var(--bg2);
+    padding: 8px 20px;
+    text-align: center;
+  }
+
+  .stat-val {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 3px;
+  }
+
+  .stat-lbl {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* ── Controls ── */
+  #controls {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 10;
+  }
+
+  .ctrl-btn {
+    width: 32px; height: 32px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.1s, border-color 0.1s;
+  }
+
+  .ctrl-btn:hover { color: var(--text); border-color: var(--accent); }
+
+  /* ── Legend ── */
+  #legend {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg2); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>⬡ graph viewer</h1>
+    <span class="badge" id="file-label">no file loaded</span>
+    <span class="spacer"></span>
+    <label for="file-input" style="cursor:pointer;">
+      <span class="badge" style="border-color:var(--accent);color:var(--accent);cursor:pointer;">load json ↑</span>
+    </label>
+    <input type="file" id="file-input" accept=".json" />
+  </header>
+
+  <!-- Drop zone (shown before file is loaded) -->
+  <div id="drop-zone">
+    <label for="file-input" style="width:100%;display:flex;justify-content:center">
+      <div class="drop-box">
+        <div class="drop-icon">⬡</div>
+        <div class="drop-title">Drop your crawl graph here</div>
+        <div class="drop-sub">or click to browse · .json</div>
+      </div>
+    </label>
+    <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-align:center;line-height:1.8;">
+      Expected format:<br>
+      <span style="color:var(--accent)">{ "url": ["linked_url", ...], ... }</span>
+    </div>
+  </div>
+
+  <!-- Graph canvas -->
+  <div id="canvas-wrap">
+    <svg id="graph">
+      <defs>
+        <marker id="arrow" markerWidth="6" markerHeight="6"
+                refX="5" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L6,3 L0,6 Z" />
+        </marker>
+      </defs>
+      <g id="zoom-layer">
+        <g id="links-layer"></g>
+        <g id="nodes-layer"></g>
+      </g>
+    </svg>
+
+    <!-- Node detail sidebar -->
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <span id="sidebar-title">node</span>
+        <button id="sidebar-close">×</button>
+      </div>
+      <div id="sidebar-url"></div>
+      <div id="sidebar-links"></div>
+    </div>
+
+    <!-- Stats -->
+    <div id="stats" style="display:none">
+      <div class="stat"><div class="stat-val" id="st-nodes">0</div><div class="stat-lbl">nodes</div></div>
+      <div class="stat"><div class="stat-val" id="st-edges">0</div><div class="stat-lbl">edges</div></div>
+      <div class="stat"><div class="stat-val" id="st-internal">0</div><div class="stat-lbl">internal</div></div>
+      <div class="stat"><div class="stat-val" id="st-external">0</div><div class="stat-lbl">external</div></div>
+    </div>
+
+    <!-- Zoom controls -->
+    <div id="controls" style="display:none">
+      <button class="ctrl-btn" id="btn-zoom-in"  title="Zoom in">+</button>
+      <button class="ctrl-btn" id="btn-zoom-out" title="Zoom out">−</button>
+      <button class="ctrl-btn" id="btn-fit"      title="Fit view">⊡</button>
+    </div>
+
+    <!-- Legend -->
+    <div id="legend" style="display:none">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--node-root)"></div>root / entry</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--node-int)"></div>internal page</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--node-ext)"></div>external link</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Graph state ────────────────────────────────────────────────────────────
+let simulation = null;
+
+// ── File loading ───────────────────────────────────────────────────────────
+function loadJSON(text) {
+  let raw;
+  try { raw = JSON.parse(text); } catch {
+    alert("Invalid JSON file."); return;
+  }
+  buildGraph(raw);
+}
+
+document.getElementById("file-input").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  document.getElementById("file-label").textContent = f.name;
+  f.text().then(loadJSON);
+});
+
+const dz = document.getElementById("drop-zone");
+document.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag-over"); });
+document.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
+document.addEventListener("drop", e => {
+  e.preventDefault();
+  dz.classList.remove("drag-over");
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  document.getElementById("file-label").textContent = f.name;
+  f.text().then(loadJSON);
+});
+
+// ── Build graph from adjacency object ──────────────────────────────────────
+function buildGraph(adj) {
+  // Stop previous simulation
+  if (simulation) simulation.stop();
+
+  // Collect all unique URLs
+  const urlSet = new Set(Object.keys(adj));
+  Object.values(adj).flat().forEach(u => urlSet.add(u));
+
+  // Determine root: node with most outbound links (likely entry point)
+  let rootUrl = Object.keys(adj)[0];
+  let maxOut = 0;
+  for (const [k, v] of Object.entries(adj)) {
+    if (v.length > maxOut) { maxOut = v.length; rootUrl = k; }
+  }
+
+  // Determine domain of root for internal/external classification
+  let rootDomain = "";
+  try { rootDomain = new URL(rootUrl).hostname; } catch {}
+
+  function classify(url) {
+    if (url === rootUrl) return "root";
+    try {
+      const d = new URL(url).hostname;
+      return d === rootDomain ? "internal" : "external";
+    } catch { return "internal"; }
+  }
+
+  // Nodes and links for D3
+  const nodeMap = {};
+  const nodes = [];
+  for (const url of urlSet) {
+    const n = { id: url, type: classify(url), links: adj[url] || [] };
+    nodeMap[url] = n;
+    nodes.push(n);
+  }
+
+  const links = [];
+  for (const [src, targets] of Object.entries(adj)) {
+    for (const tgt of targets) {
+      if (nodeMap[src] && nodeMap[tgt]) {
+        links.push({ source: src, target: tgt });
+      }
+    }
+  }
+
+  // Stats
+  const intCount = nodes.filter(n => n.type !== "external").length;
+  const extCount = nodes.filter(n => n.type === "external").length;
+  document.getElementById("st-nodes").textContent = nodes.length;
+  document.getElementById("st-edges").textContent = links.length;
+  document.getElementById("st-internal").textContent = intCount;
+  document.getElementById("st-external").textContent = extCount;
+  document.getElementById("stats").style.display = "flex";
+  document.getElementById("controls").style.display = "flex";
+  document.getElementById("legend").style.display = "flex";
+  document.getElementById("drop-zone").classList.add("hidden");
+
+  renderGraph(nodes, links, nodeMap);
+}
+
+// ── D3 force graph ─────────────────────────────────────────────────────────
+function renderGraph(nodes, links, nodeMap) {
+  const svg = d3.select("#graph");
+  const layer = d3.select("#zoom-layer");
+  const W = document.getElementById("canvas-wrap").clientWidth;
+  const H = document.getElementById("canvas-wrap").clientHeight;
+
+  // Clear previous render
+  d3.select("#links-layer").selectAll("*").remove();
+  d3.select("#nodes-layer").selectAll("*").remove();
+
+  // Node radius by type
+  function radius(d) {
+    if (d.type === "root") return 10;
+    if (d.type === "internal") return Math.max(5, Math.min(9, 4 + (d.links.length || 0) * 0.6));
+    return 4;
+  }
+
+  // ── Simulation ───────────────────────────────────────────────────────────
+  simulation = d3.forceSimulation(nodes)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(d => {
+      // Shorter edges between internal nodes; longer to externals
+      const tType = d.target.type || "internal";
+      return tType === "external" ? 90 : 60;
+    }).strength(0.4))
+    .force("charge", d3.forceManyBody().strength(d => d.type === "root" ? -400 : -180))
+    .force("center", d3.forceCenter(W / 2, H / 2))
+    .force("collision", d3.forceCollide().radius(d => radius(d) + 6))
+    .alphaDecay(0.025);
+
+  // ── Edges ─────────────────────────────────────────────────────────────────
+  const linkSel = d3.select("#links-layer")
+    .selectAll("line")
+    .data(links)
+    .enter().append("line")
+    .attr("class", "link")
+    .attr("marker-end", "url(#arrow)");
+
+  // ── Nodes ─────────────────────────────────────────────────────────────────
+  const nodeSel = d3.select("#nodes-layer")
+    .selectAll("g")
+    .data(nodes)
+    .enter().append("g")
+    .attr("class", d => `node ${d.type}`)
+    .call(d3.drag()
+      .on("start", (event, d) => {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x; d.fy = d.y;
+      })
+      .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
+      .on("end", (event, d) => {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null; d.fy = null;
+      })
+    )
+    .on("click", (event, d) => {
+      event.stopPropagation();
+      openSidebar(d, nodeMap);
+      highlight(d, nodeSel, linkSel);
+    });
+
+  nodeSel.append("circle")
+    .attr("r", d => radius(d));
+
+  nodeSel.append("text")
+    .attr("dy", d => radius(d) + 10)
+    .text(d => {
+      // Show short label: last path segment or hostname
+      try {
+        const u = new URL(d.id);
+        const parts = u.pathname.split("/").filter(Boolean);
+        return parts.length ? parts[parts.length - 1] : u.hostname;
+      } catch { return d.id.slice(0, 18); }
+    });
+
+  // ── Tick ─────────────────────────────────────────────────────────────────
+  simulation.on("tick", () => {
+    linkSel
+      .attr("x1", d => d.source.x)
+      .attr("y1", d => d.source.y)
+      .attr("x2", d => {
+        // Shorten line to stop at node border (for arrowhead)
+        const dx = d.target.x - d.source.x;
+        const dy = d.target.y - d.source.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const r = radius(d.target) + 3;
+        return d.target.x - (dx / dist) * r;
+      })
+      .attr("y2", d => {
+        const dx = d.target.x - d.source.x;
+        const dy = d.target.y - d.source.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const r = radius(d.target) + 3;
+        return d.target.y - (dy / dist) * r;
+      });
+
+    nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
+  });
+
+  // ── Zoom & pan ────────────────────────────────────────────────────────────
+  const zoom = d3.zoom()
+    .scaleExtent([0.05, 4])
+    .on("zoom", e => layer.attr("transform", e.transform));
+
+  svg.call(zoom);
+
+  // Click on empty canvas → deselect
+  svg.on("click", () => {
+    closeSidebar();
+    nodeSel.classed("dimmed", false).classed("highlighted", false);
+    linkSel.classed("highlighted", false);
+  });
+
+  // Fit view after simulation settles
+  setTimeout(() => fitView(zoom, svg, nodes), 1800);
+
+  // Controls
+  document.getElementById("btn-zoom-in").onclick  = () => svg.transition().call(zoom.scaleBy, 1.4);
+  document.getElementById("btn-zoom-out").onclick = () => svg.transition().call(zoom.scaleBy, 0.7);
+  document.getElementById("btn-fit").onclick      = () => fitView(zoom, svg, nodes);
+}
+
+// ── Fit to view ────────────────────────────────────────────────────────────
+function fitView(zoom, svg, nodes) {
+  const W = document.getElementById("canvas-wrap").clientWidth;
+  const H = document.getElementById("canvas-wrap").clientHeight;
+  const pad = 60;
+
+  const xs = nodes.map(n => n.x).filter(Boolean);
+  const ys = nodes.map(n => n.y).filter(Boolean);
+  if (!xs.length) return;
+
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const gw = x1 - x0 || 1, gh = y1 - y0 || 1;
+
+  const scale = Math.min(0.95, (W - pad * 2) / gw, (H - pad * 2) / gh);
+  const tx = W / 2 - scale * (x0 + x1) / 2;
+  const ty = H / 2 - scale * (y0 + y1) / 2;
+
+  svg.transition().duration(600)
+    .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+}
+
+// ── Highlight connected nodes ──────────────────────────────────────────────
+function highlight(d, nodeSel, linkSel) {
+  const connectedIds = new Set([d.id]);
+  linkSel.each(l => {
+    if (l.source.id === d.id) connectedIds.add(l.target.id);
+    if (l.target.id === d.id) connectedIds.add(l.source.id);
+  });
+
+  nodeSel.classed("dimmed", n => !connectedIds.has(n.id))
+         .classed("highlighted", n => n.id === d.id);
+
+  linkSel.classed("highlighted", l =>
+    l.source.id === d.id || l.target.id === d.id
+  );
+}
+
+// ── Sidebar ────────────────────────────────────────────────────────────────
+function openSidebar(d, nodeMap) {
+  document.getElementById("sidebar-url").textContent = d.id;
+  document.getElementById("sidebar-title").textContent =
+    d.type === "root" ? "root node" : d.type === "external" ? "external node" : "internal node";
+
+  const container = document.getElementById("sidebar-links");
+  container.innerHTML = "";
+
+  if (!d.links || d.links.length === 0) {
+    container.innerHTML = `<div class="link-item" style="color:var(--muted);cursor:default">no outbound links</div>`;
+  } else {
+    d.links.forEach(url => {
+      const n = nodeMap[url];
+      const cls = n && n.type === "external" ? "ext" : "int";
+      const el = document.createElement("div");
+      el.className = "link-item";
+      el.innerHTML = `<div class="link-dot ${cls}"></div>${url}`;
+      el.title = url;
+      container.appendChild(el);
+    });
+  }
+
+  document.getElementById("sidebar").classList.add("open");
+}
+
+function closeSidebar() {
+  document.getElementById("sidebar").classList.remove("open");
+}
+
+document.getElementById("sidebar-close").addEventListener("click", () => {
+  closeSidebar();
+  d3.selectAll(".node").classed("dimmed", false).classed("highlighted", false);
+  d3.selectAll(".link").classed("highlighted", false);
+});
+</script>
+</body>
+</html>
