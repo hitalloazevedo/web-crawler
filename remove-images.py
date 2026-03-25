@@ -39,4 +39,4 @@ def clean_link_json(input_filename, output_filename):
 
 if __name__ == "__main__":
     # Example usage:
-    clean_link_json('graph.json', 'cleaned_links.json')
+    clean_link_json('graph.json', 'graph-no-images.json')

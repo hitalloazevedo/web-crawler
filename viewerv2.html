@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pro Crawl Graph Viewer (High Repulsion)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  /* ── Reset & base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0b0e14;
+    --bg2:       #121722;
+    --bg3:       #1a2030;
+    --border:    #252d3d;
+    --text:      #c9d1e0;
+    --muted:     #4a5568;
+    --accent:    #4fc3f7;
+    --accent2:   #81d4fa;
+    --green:     #69f0ae;
+    --amber:     #ffd54f;
+    --orange:    #ff9800;
+    --red:       #ef5350;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    --radius:    6px;
+  }
+
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; overflow: hidden; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 0 20px; height: 52px;
+    border-bottom: 1px solid var(--border); background: var(--bg2); z-index: 10;
+  }
+
+  header h1 { font-family: var(--font-mono); font-size: 13px; color: var(--accent); text-transform: uppercase; }
+  .badge { font-family: var(--font-mono); font-size: 11px; padding: 2px 8px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); }
+  .spacer { flex: 1; }
+
+  #drop-zone {
+    position: absolute; inset: 52px 0 0 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; z-index: 5; background: var(--bg);
+  }
+  #drop-zone.hidden { display: none; }
+  .drop-box { width: 340px; border: 1px dashed var(--border); border-radius: var(--radius); padding: 40px; text-align: center; cursor: pointer; }
+
+  #canvas-wrap { flex: 1; position: relative; overflow: hidden; cursor: crosshair; }
+  canvas { width: 100%; height: 100%; display: block; }
+
+  #sidebar {
+    position: absolute; top: 12px; right: 12px; width: 280px; background: var(--bg2);
+    border: 1px solid var(--border); border-radius: var(--radius); transform: translateX(310px);
+    transition: transform 0.25s ease; z-index: 20;
+  }
+  #sidebar.open { transform: translateX(0); }
+  #sidebar-header { padding: 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  #sidebar-url { padding: 12px; font-family: var(--font-mono); font-size: 10px; word-break: break-all; }
+  #sidebar-url a { color: var(--accent); text-decoration: none; }
+  #sidebar-url a:hover { text-decoration: underline; }
+  #sidebar-links { max-height: 500px; overflow-y: auto; padding: 12px; font-size: 11px; }
+
+  #stats { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); z-index: 10; }
+  .stat { padding: 8px 15px; text-align: center; border-right: 1px solid var(--border); }
+  .stat:last-child { border-right: none; }
+  .stat-val { font-family: var(--font-mono); font-size: 14px; color: var(--accent); }
+  .stat-lbl { font-size: 9px; color: var(--muted); text-transform: uppercase; }
+
+  #legend { position: absolute; bottom: 16px; right: 16px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; z-index: 10; font-size: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: var(--muted); }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  #controls { position: absolute; top: 12px; left: 12px; width: 260px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; z-index: 10; }
+  .control-group { margin-bottom: 12px; }
+  .control-group:last-child { margin-bottom: 0; }
+  .control-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; }
+  .control-value { color: var(--accent); font-family: var(--font-mono); }
+  input[type="range"] { width: 100%; height: 4px; background: var(--border); border-radius: 2px; outline: none; -webkit-appearance: none; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); cursor: pointer; }
+  input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); cursor: pointer; border: none; }
+  .control-btn { width: 100%; padding: 6px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; color: var(--accent); font-family: var(--font-mono); font-size: 10px; cursor: pointer; transition: all 0.2s; }
+  .control-btn:hover { background: var(--border); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>⬡ graph viewer 2.0</h1>
+    <span class="badge" id="file-label">no file loaded</span>
+    <span class="spacer"></span>
+    <label for="file-input" style="cursor:pointer;"><span class="badge" style="border-color:var(--accent);color:var(--accent);">LOAD JSON ↑</span></label>
+    <input type="file" id="file-input" accept=".json" style="display:none" />
+  </header>
+
+  <div id="drop-zone">
+    <label for="file-input">
+      <div class="drop-box">
+        <div style="font-size:24px; margin-bottom:10px;">⬡</div>
+        <div>Drop .json crawl graph</div>
+      </div>
+    </label>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="graph-canvas"></canvas>
+
+    <div id="controls" style="display:none">
+      <div style="font-size: 11px; color: var(--accent); margin-bottom: 10px; font-family: var(--font-mono);">⚙ PHYSICS CONTROLS</div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Repulsion</span>
+          <span class="control-value" id="repulsion-val">-80</span>
+        </div>
+        <input type="range" id="repulsion" min="20" max="200" value="80" step="5">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Link Distance</span>
+          <span class="control-value" id="distance-val">200</span>
+        </div>
+        <input type="range" id="distance" min="50" max="400" value="200" step="10">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Link Strength</span>
+          <span class="control-value" id="strength-val">0.08</span>
+        </div>
+        <input type="range" id="strength" min="1" max="30" value="8" step="1">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Collision Buffer</span>
+          <span class="control-value" id="collision-val">20</span>
+        </div>
+        <input type="range" id="collision" min="5" max="50" value="20" step="5">
+      </div>
+
+      <button class="control-btn" onclick="restartSimulation()">↻ RESTART SIMULATION</button>
+    </div>
+
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <span id="sidebar-title" style="font-size:10px; color:var(--accent)">NODE DETAIL</span>
+        <button onclick="closeSidebar()" style="background:none; border:none; color:var(--muted); cursor:pointer">×</button>
+      </div>
+      <div id="sidebar-url"></div>
+      <div id="sidebar-links"></div>
+    </div>
+
+    <div id="stats" style="display:none">
+      <div class="stat"><div class="stat-val" id="st-nodes">0</div><div class="stat-lbl">nodes</div></div>
+      <div class="stat"><div class="stat-val" id="st-edges">0</div><div class="stat-lbl">edges</div></div>
+      <div class="stat"><div class="stat-val" id="st-external">0</div><div class="stat-lbl">external</div></div>
+    </div>
+
+    <div id="legend" style="display:none">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Root Node (liag.ft.unicamp.br)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Internal (LIAG)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--orange)"></div>External Sites</div>
+    </div>
+  </div>
+</div>
+
+<script id="worker-code" type="text/javascript-worker">
+  importScripts('https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js');
+  let simulation;
+
+  self.onmessage = function(e) {
+    const { command, nodes, links, width, height, params } = e.data;
+
+    // Handle stop command
+    if (command === 'stop') {
+      if (simulation) {
+        simulation.stop();
+      }
+      return;
+    }
+
+    // Handle restart command
+    if (command === 'restart') {
+      if (simulation) {
+        simulation.stop();
+      }
+
+      const repulsion = params?.repulsion || -80;
+      const linkDistance = params?.linkDistance || 200;
+      const linkStrength = params?.linkStrength || 0.08;
+      const collisionBuffer = params?.collisionBuffer || 20;
+
+      simulation = d3.forceSimulation(nodes)
+        .force("link", d3.forceLink(links).id(d => d.id).distance(linkDistance).strength(linkStrength))
+        .force("charge", d3.forceManyBody().strength(d => d.r * repulsion))
+        .force("center", d3.forceCenter(width / 2, height / 2))
+        .force("collide", d3.forceCollide().radius(d => d.r + collisionBuffer))
+        .alphaDecay(0.01)
+        .alpha(1);
+
+      simulation.on("tick", () => {
+        self.postMessage({ type: 'tick', nodes, links });
+      });
+
+      return;
+    }
+
+    // Default: start new simulation
+    if (simulation) {
+      simulation.stop();
+    }
+
+    const repulsion = params?.repulsion || -80;
+    const linkDistance = params?.linkDistance || 200;
+    const linkStrength = params?.linkStrength || 0.08;
+    const collisionBuffer = params?.collisionBuffer || 20;
+
+    simulation = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(links).id(d => d.id).distance(linkDistance).strength(linkStrength))
+      .force("charge", d3.forceManyBody().strength(d => d.r * repulsion))
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .force("collide", d3.forceCollide().radius(d => d.r + collisionBuffer))
+      .alphaDecay(0.01);
+
+    simulation.on("tick", () => {
+      self.postMessage({ type: 'tick', nodes, links });
+    });
+  };
+</script>
+
+<script>
+let nodes = [], links = [], nodeMap = {}, quadtree = null;
+let transform = d3.zoomIdentity;
+let selectedNode = null;
+let rootUrl = "https://liag.ft.unicamp.br";
+
+// Physics parameters
+let physicsParams = {
+  repulsion: -80,
+  linkDistance: 200,
+  linkStrength: 0.08,
+  collisionBuffer: 20
+};
+
+const canvas = document.getElementById("graph-canvas");
+const ctx = canvas.getContext("2d");
+const workerBlob = new Blob([document.getElementById('worker-code').textContent], { type: 'text/javascript' });
+const worker = new Worker(URL.createObjectURL(workerBlob));
+
+function resize() {
+  canvas.width = canvas.clientWidth * window.devicePixelRatio;
+  canvas.height = canvas.clientHeight * window.devicePixelRatio;
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  render();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Setup control panel listeners
+document.getElementById("repulsion").oninput = e => {
+  physicsParams.repulsion = -parseInt(e.target.value);
+  document.getElementById("repulsion-val").textContent = physicsParams.repulsion;
+};
+
+document.getElementById("distance").oninput = e => {
+  physicsParams.linkDistance = parseInt(e.target.value);
+  document.getElementById("distance-val").textContent = physicsParams.linkDistance;
+};
+
+document.getElementById("strength").oninput = e => {
+  physicsParams.linkStrength = parseInt(e.target.value) / 100;
+  document.getElementById("strength-val").textContent = physicsParams.linkStrength.toFixed(2);
+};
+
+document.getElementById("collision").oninput = e => {
+  physicsParams.collisionBuffer = parseInt(e.target.value);
+  document.getElementById("collision-val").textContent = physicsParams.collisionBuffer;
+};
+
+function restartSimulation() {
+  if (nodes.length === 0) return;
+
+  worker.postMessage({
+    command: 'restart',
+    nodes,
+    links,
+    width: canvas.clientWidth,
+    height: canvas.clientHeight,
+    params: physicsParams
+  });
+}
+
+document.getElementById("file-input").onchange = e => {
+  const f = e.target.files[0];
+  if (f) {
+    document.getElementById("file-label").textContent = f.name;
+    f.text().then(processData);
+  }
+};
+
+function processData(text) {
+  const adj = JSON.parse(text);
+  document.getElementById("drop-zone").classList.add("hidden");
+  document.getElementById("stats").style.display = "flex";
+  document.getElementById("legend").style.display = "flex";
+  document.getElementById("controls").style.display = "block";
+
+  const urlSet = new Set(Object.keys(adj));
+  Object.values(adj).flat().forEach(u => urlSet.add(u));
+
+  // Track both incoming degree and incoming links
+  const inDegree = {};
+  const inLinks = {};
+  for (const [source, targets] of Object.entries(adj)) {
+    targets.forEach(t => {
+      inDegree[t] = (inDegree[t] || 0) + 1;
+      if (!inLinks[t]) inLinks[t] = [];
+      inLinks[t].push(source);
+    });
+  }
+
+  let externalCount = 0;
+  nodes = Array.from(urlSet).map(id => {
+    const outCount = adj[id] ? adj[id].length : 0;
+    const inCount = inDegree[id] || 0;
+    const total = outCount + inCount;
+
+    // Calculate radius proportional to connections
+    // Using sqrt for better visual distribution
+    const minSize = 3;
+    const scaleFactor = 2.5;
+    let r = Math.max(minSize, Math.sqrt(total) * scaleFactor);
+
+    // Give root node a slight visual boost while keeping it proportional
+    if (id === rootUrl) {
+      r = Math.max(r, 10) + 3;
+    }
+
+    const isExternal = !id.includes('liag.ft.unicamp.br');
+    if (isExternal) externalCount++;
+    return {
+      id,
+      outLinks: adj[id] || [],
+      inLinks: inLinks[id] || [],
+      r,
+      total,
+      isExternal
+    };
+  });
+
+  links = [];
+  for (const [src, targets] of Object.entries(adj)) {
+    targets.forEach(tgt => links.push({ source: src, target: tgt }));
+  }
+
+  document.getElementById("st-nodes").textContent = nodes.length;
+  document.getElementById("st-edges").textContent = links.length;
+  document.getElementById("st-external").textContent = externalCount;
+
+  worker.postMessage({
+    nodes,
+    links,
+    width: canvas.clientWidth,
+    height: canvas.clientHeight,
+    params: physicsParams
+  });
+}
+
+worker.onmessage = e => {
+  if (e.data.type === 'tick') {
+    nodes = e.data.nodes;
+    links = e.data.links;
+    quadtree = d3.quadtree().x(d => d.x).y(d => d.y).addAll(nodes);
+    render();
+  }
+};
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(transform.x, transform.y);
+  ctx.scale(transform.k, transform.k);
+
+  ctx.beginPath();
+  ctx.strokeStyle = "rgba(79, 195, 247, 0.1)";
+  ctx.lineWidth = 0.5 / transform.k;
+  for (const l of links) {
+    ctx.moveTo(l.source.x, l.source.y);
+    ctx.lineTo(l.target.x, l.target.y);
+  }
+  ctx.stroke();
+
+  for (const n of nodes) {
+    ctx.beginPath();
+    // Root node: green
+    if (n.id === rootUrl) {
+      ctx.fillStyle = "#69f0ae";
+    }
+    // Selected node: white
+    else if (n === selectedNode) {
+      ctx.fillStyle = "#ffffff";
+    }
+    // External nodes (not containing liag.ft.unicamp.br): orange
+    else if (n.isExternal) {
+      ctx.fillStyle = "#ff9800";
+    }
+    // Internal nodes: blue
+    else {
+      ctx.fillStyle = "#4fc3f7";
+    }
+
+    const drawR = n.r / Math.max(1, transform.k * 0.5);
+    ctx.arc(n.x, n.y, drawR, 0, 2 * Math.PI);
+    ctx.fill();
+
+    if (transform.k > 1.2 || (n.total > 20 && transform.k > 0.5)) {
+      ctx.fillStyle = "rgba(201, 209, 224, 0.8)";
+      ctx.font = `${10 / transform.k}px monospace`;
+      const label = n.id.split('/').pop() || n.id;
+      ctx.fillText(label, n.x + drawR + 2, n.y);
+    }
+  }
+  ctx.restore();
+}
+
+const zoom = d3.zoom().scaleExtent([0.01, 8]).on("zoom", e => {
+  transform = e.transform;
+  render();
+});
+d3.select(canvas).call(zoom);
+
+canvas.onclick = e => {
+  const [x, y] = d3.pointer(e);
+  const tx = (x - transform.x) / transform.k;
+  const ty = (y - transform.y) / transform.k;
+  selectedNode = quadtree ? quadtree.find(tx, ty, 30 / transform.k) : null;
+
+  if (selectedNode) {
+    document.getElementById("sidebar-url").innerHTML = `<a href="${selectedNode.id}" target="_blank" rel="noopener noreferrer">${selectedNode.id}</a>`;
+
+    const pointsToHTML = selectedNode.outLinks.length > 0
+      ? selectedNode.outLinks.map(l => `<div style="margin:2px 0; color: var(--accent);"><span style="color: var(--accent2);">→</span> ${l}</div>`).join('')
+      : '<div style="color:var(--muted)"><i>No outgoing links</i></div>';
+
+    const pointedByHTML = selectedNode.inLinks.length > 0
+      ? selectedNode.inLinks.map(l => `<div style="margin:2px 0; color: var(--green);"><span style="color: var(--amber);">←</span> ${l}</div>`).join('')
+      : '<div style="color:var(--muted)"><i>No incoming links</i></div>';
+
+    document.getElementById("sidebar-links").innerHTML = `
+      <strong>Type:</strong> ${selectedNode.id === rootUrl ? 'Root' : (selectedNode.isExternal ? 'External' : 'Internal')}<br>
+      <strong>Total Connections:</strong> ${selectedNode.total}<br><br>
+
+      <div style="margin-bottom:12px">
+        <strong style="color: var(--accent2);">Points to (${selectedNode.outLinks.length}):</strong><br>
+        ${pointsToHTML}
+      </div>
+
+      <div>
+        <strong style="color: var(--amber);">Pointed by (${selectedNode.inLinks.length}):</strong><br>
+        ${pointedByHTML}
+      </div>
+    `;
+    document.getElementById("sidebar").classList.add("open");
+  } else {
+    closeSidebar();
+  }
+  render();
+};
+
+function closeSidebar() {
+  document.getElementById("sidebar").classList.remove("open");
+  selectedNode = null;
+  render();
+}
+</script>
+</body>
+</html>
