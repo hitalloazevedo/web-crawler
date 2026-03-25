@@ -632,7 +632,12 @@ document.getElementById('bo').addEventListener('click', function() {
   if (treeRoot) { render(treeRoot); setTimeout(fitView, DUR+50); }
 });
 document.getElementById('be').addEventListener('click', () => {
-  if (!treeRoot) return; expand(treeRoot); render(treeRoot); setTimeout(fitView, DUR+50);
+  if (!treeRoot) return;
+  // Recursively expand every node in the entire tree
+  treeRoot.each(d => {
+    if (d._children) { d.children = d._children; d._children = null; }
+  });
+  render(treeRoot); setTimeout(fitView, DUR+50);
 });
 document.getElementById('bc').addEventListener('click', () => {
   if (!treeRoot) return;
